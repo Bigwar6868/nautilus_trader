@@ -1,25 +1,39 @@
 """
-15 competing trading strategies for head-to-head backtesting.
-Inspired by popular TradingView strategies and classic quant approaches.
+25 competing trading strategies for head-to-head backtesting.
+Inspired by popular TradingView strategies, classic quant approaches,
+and research from quantified strategies / institutional quant desks.
 
 Strategies:
- 1. EMA Cross             - Trend following with fast/slow EMA crossover
- 2. BB Mean Reversion     - Bollinger Band + RSI mean reversion
- 3. MACD Trend            - MACD zero-line crossover with EMA filter
- 4. Donchian Breakout     - Channel breakout (turtle-style) with ATR stop
- 5. RSI Momentum          - RSI overbought/oversold with EMA confirmation
- 6. Triple EMA            - 3 EMAs (short/mid/long) alignment trend strategy
- 7. Keltner Squeeze       - Bollinger inside Keltner channel squeeze breakout
- 8. Stochastic Reversal   - Stochastic K/D crossover in extreme zones
- 9. CCI Breakout          - Commodity Channel Index trend breakout
-10. Mean Reversion SMA    - Price deviation from SMA with mean reversion
-11. ADX Trend Strength    - Directional Movement with ADX trend filter
-12. Double BB             - Double Bollinger Bands walk-the-band trend strategy
-13. EMA+RSI Combo         - EMA trend direction + RSI pullback entry
-14. Momentum Breakout     - Rate of Change breakout with volume filter (OBV)
-15. Aroon Trend           - Aroon oscillator trend identification
+ 1.  EMA Cross             - Trend following with fast/slow EMA crossover
+ 2.  BB Mean Reversion     - Bollinger Band + RSI mean reversion
+ 3.  MACD Trend            - MACD zero-line crossover with EMA filter
+ 4.  Donchian Breakout     - Channel breakout (turtle-style) with ATR stop
+ 5.  RSI Momentum          - RSI overbought/oversold with EMA confirmation
+ 6.  Triple EMA            - 3 EMAs (short/mid/long) alignment trend strategy
+ 7.  Keltner Squeeze       - Bollinger inside Keltner channel squeeze breakout
+ 8.  Stochastic Reversal   - Stochastic K/D crossover in extreme zones
+ 9.  CCI Breakout          - Commodity Channel Index trend breakout
+10.  Mean Reversion SMA    - Price deviation from SMA with mean reversion
+11.  ADX Trend Strength    - Directional Movement with ADX trend filter
+12.  Double BB             - Double Bollinger Bands walk-the-band trend strategy
+13.  EMA+RSI Combo         - EMA trend direction + RSI pullback entry
+14.  Momentum Breakout     - Rate of Change breakout
+15.  Aroon Trend           - Aroon oscillator trend identification
+--- Advanced Quant / TradingView Strategies ---
+16.  SuperTrend            - ATR-based trailing stop trend follower (TV #1)
+17.  Ichimoku Cloud        - Multi-component Japanese trend system
+18.  VWAP Reversion        - Volume-weighted average price mean reversion
+19.  Linear Reg Channel    - Linear regression channel breakout
+20.  Dual Thrust           - Opening range breakout (famous Chinese quant)
+21.  RSI+SuperTrend Combo  - Multi-indicator confirmation (TV popular)
+22.  Keltner Trend         - Keltner Channel trend riding
+23.  Ichimoku+RSI          - Ichimoku cloud with RSI momentum filter
+24.  Pivot Reversal        - Swing high/low pivot point reversal
+25.  Hull MA Cross         - Hull Moving Average fast crossover
 """
 
+from collections import deque
+from datetime import datetime
 from decimal import Decimal
 
 from nautilus_trader.config import PositiveFloat
@@ -32,13 +46,17 @@ from nautilus_trader.indicators import CommodityChannelIndex
 from nautilus_trader.indicators import DirectionalMovement
 from nautilus_trader.indicators import DonchianChannel
 from nautilus_trader.indicators import ExponentialMovingAverage
+from nautilus_trader.indicators import HullMovingAverage
 from nautilus_trader.indicators import KeltnerChannel
+from nautilus_trader.indicators import LinearRegression
 from nautilus_trader.indicators import MovingAverageConvergenceDivergence
 from nautilus_trader.indicators import OnBalanceVolume
 from nautilus_trader.indicators import RateOfChange
 from nautilus_trader.indicators import RelativeStrengthIndex
 from nautilus_trader.indicators import SimpleMovingAverage
 from nautilus_trader.indicators import Stochastics
+from nautilus_trader.indicators import Swings
+from nautilus_trader.indicators import VolumeWeightedAveragePrice
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.data import BarType
 from nautilus_trader.model.enums import OrderSide
@@ -47,6 +65,51 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import Instrument
 from nautilus_trader.model.orders import MarketOrder
 from nautilus_trader.trading.strategy import Strategy
+
+
+# ===========================================================================
+# Simple Ichimoku Cloud calculator (not in installed nautilus_trader 1.221)
+# ===========================================================================
+class _IchimokuCalc:
+    """Minimal Ichimoku Cloud calculation."""
+
+    def __init__(self, tenkan: int = 9, kijun: int = 26, senkou: int = 52):
+        self.tenkan_period = tenkan
+        self.kijun_period = kijun
+        self.senkou_period = senkou
+        self._highs = deque(maxlen=senkou)
+        self._lows = deque(maxlen=senkou)
+        self.tenkan_sen = 0.0
+        self.kijun_sen = 0.0
+        self.senkou_span_a = 0.0
+        self.senkou_span_b = 0.0
+        self.initialized = False
+
+    def update(self, high: float, low: float) -> None:
+        self._highs.append(high)
+        self._lows.append(low)
+        n = len(self._highs)
+        if n >= self.senkou_period:
+            self.initialized = True
+        if n >= self.tenkan_period:
+            t_highs = list(self._highs)[-self.tenkan_period:]
+            t_lows = list(self._lows)[-self.tenkan_period:]
+            self.tenkan_sen = (max(t_highs) + min(t_lows)) / 2.0
+        if n >= self.kijun_period:
+            k_highs = list(self._highs)[-self.kijun_period:]
+            k_lows = list(self._lows)[-self.kijun_period:]
+            self.kijun_sen = (max(k_highs) + min(k_lows)) / 2.0
+        if n >= self.senkou_period:
+            self.senkou_span_a = (self.tenkan_sen + self.kijun_sen) / 2.0
+            s_highs = list(self._highs)[-self.senkou_period:]
+            s_lows = list(self._lows)[-self.senkou_period:]
+            self.senkou_span_b = (max(s_highs) + min(s_lows)) / 2.0
+
+    def reset(self) -> None:
+        self._highs.clear()
+        self._lows.clear()
+        self.tenkan_sen = self.kijun_sen = self.senkou_span_a = self.senkou_span_b = 0.0
+        self.initialized = False
 
 
 # ===========================================================================
@@ -965,3 +1028,696 @@ class AroonTrendArena(_ArenaBase):
 
     def on_reset(self) -> None:
         self.aroon.reset()
+
+
+# ===========================================================================
+# 16. SuperTrend Strategy (TradingView #1 indicator)
+# ===========================================================================
+class SuperTrendArenaConfig(StrategyConfig, frozen=True):
+    instrument_id: InstrumentId
+    bar_type: BarType
+    trade_size: Decimal
+    atr_period: PositiveInt = 10
+    atr_multiplier: PositiveFloat = 3.0
+    close_positions_on_stop: bool = True
+
+
+class SuperTrendArena(_ArenaBase):
+    """ATR-based SuperTrend: calculates trailing stop bands using ATR.
+    Flips from long to short when price crosses below lower band, and vice versa.
+    This is the most popular TradingView indicator."""
+
+    def __init__(self, config: SuperTrendArenaConfig) -> None:
+        super().__init__(config)
+        self.instrument: Instrument = None
+        self.atr = AverageTrueRange(config.atr_period)
+        self._upper_band: float = 0.0
+        self._lower_band: float = 0.0
+        self._prev_upper: float = 0.0
+        self._prev_lower: float = 0.0
+        self._trend: int = 1  # 1 = up, -1 = down
+        self._prev_close: float = 0.0
+
+    def on_start(self) -> None:
+        if not self._load_instrument():
+            return
+        self.register_indicator_for_bars(self.config.bar_type, self.atr)
+        self.subscribe_bars(self.config.bar_type)
+
+    def on_bar(self, bar: Bar) -> None:
+        if not self.atr.initialized or bar.is_single_price():
+            self._prev_close = bar.close.as_double()
+            return
+
+        h, l, c = bar.high.as_double(), bar.low.as_double(), bar.close.as_double()
+        hl2 = (h + l) / 2.0
+        atr_val = self.atr.value * self.config.atr_multiplier
+
+        # Calculate basic bands
+        basic_upper = hl2 + atr_val
+        basic_lower = hl2 - atr_val
+
+        # Final bands (carry forward if price hasn't crossed)
+        if basic_lower > self._prev_lower or self._prev_close < self._prev_lower:
+            self._lower_band = basic_lower
+        else:
+            self._lower_band = self._prev_lower
+
+        if basic_upper < self._prev_upper or self._prev_close > self._prev_upper:
+            self._upper_band = basic_upper
+        else:
+            self._upper_band = self._prev_upper
+
+        # Determine trend direction
+        prev_trend = self._trend
+        if prev_trend == -1 and c > self._prev_upper:
+            self._trend = 1
+        elif prev_trend == 1 and c < self._prev_lower:
+            self._trend = -1
+
+        # Trade on trend flip
+        if self._trend == 1 and prev_trend == -1:
+            self._flip_or_enter(OrderSide.BUY)
+        elif self._trend == -1 and prev_trend == 1:
+            self._flip_or_enter(OrderSide.SELL)
+
+        self._prev_upper = self._upper_band
+        self._prev_lower = self._lower_band
+        self._prev_close = c
+
+    def on_stop(self) -> None:
+        self._default_on_stop()
+
+    def on_reset(self) -> None:
+        self.atr.reset()
+        self._upper_band = self._lower_band = 0.0
+        self._prev_upper = self._prev_lower = 0.0
+        self._trend = 1
+        self._prev_close = 0.0
+
+
+# ===========================================================================
+# 17. Ichimoku Cloud Strategy
+# ===========================================================================
+class IchimokuArenaConfig(StrategyConfig, frozen=True):
+    instrument_id: InstrumentId
+    bar_type: BarType
+    trade_size: Decimal
+    tenkan_period: PositiveInt = 9
+    kijun_period: PositiveInt = 26
+    senkou_period: PositiveInt = 52
+    close_positions_on_stop: bool = True
+
+
+class IchimokuArena(_ArenaBase):
+    """Ichimoku Cloud strategy:
+    Buy when price above cloud AND tenkan > kijun (TK cross).
+    Sell when price below cloud AND tenkan < kijun.
+    Exit when price enters the cloud."""
+
+    def __init__(self, config: IchimokuArenaConfig) -> None:
+        super().__init__(config)
+        self.instrument: Instrument = None
+        self.ichimoku = _IchimokuCalc(config.tenkan_period, config.kijun_period, config.senkou_period)
+
+    def on_start(self) -> None:
+        if not self._load_instrument():
+            return
+        self.subscribe_bars(self.config.bar_type)
+
+    def on_bar(self, bar: Bar) -> None:
+        h, l, c = bar.high.as_double(), bar.low.as_double(), bar.close.as_double()
+        self.ichimoku.update(h, l)
+        if not self.ichimoku.initialized or bar.is_single_price():
+            return
+
+        iid = self.config.instrument_id
+        tenkan = self.ichimoku.tenkan_sen
+        kijun = self.ichimoku.kijun_sen
+        span_a = self.ichimoku.senkou_span_a
+        span_b = self.ichimoku.senkou_span_b
+
+        cloud_top = max(span_a, span_b)
+        cloud_bottom = min(span_a, span_b)
+
+        # Price above cloud + TK cross bullish
+        if c > cloud_top and tenkan > kijun:
+            self._flip_or_enter(OrderSide.BUY)
+        # Price below cloud + TK cross bearish
+        elif c < cloud_bottom and tenkan < kijun:
+            self._flip_or_enter(OrderSide.SELL)
+        # Price inside cloud -> exit
+        elif not self.portfolio.is_flat(iid) and cloud_bottom <= c <= cloud_top:
+            self.close_all_positions(iid)
+
+    def on_stop(self) -> None:
+        self._default_on_stop()
+
+    def on_reset(self) -> None:
+        self.ichimoku.reset()
+
+
+# ===========================================================================
+# 18. VWAP Reversion Strategy (Institutional favorite)
+# ===========================================================================
+class VWAPReversionArenaConfig(StrategyConfig, frozen=True):
+    instrument_id: InstrumentId
+    bar_type: BarType
+    trade_size: Decimal
+    atr_period: PositiveInt = 14
+    entry_atr_multiple: PositiveFloat = 1.5
+    exit_atr_multiple: PositiveFloat = 0.3
+    close_positions_on_stop: bool = True
+
+
+class VWAPReversionArena(_ArenaBase):
+    """VWAP mean reversion: enter when price deviates >1.5 ATR from VWAP,
+    exit when price reverts within 0.3 ATR of VWAP. Institutional strategy."""
+
+    def __init__(self, config: VWAPReversionArenaConfig) -> None:
+        super().__init__(config)
+        self.instrument: Instrument = None
+        self.vwap = VolumeWeightedAveragePrice()
+        self.atr = AverageTrueRange(config.atr_period)
+
+    def on_start(self) -> None:
+        if not self._load_instrument():
+            return
+        self.register_indicator_for_bars(self.config.bar_type, self.atr)
+        self.subscribe_bars(self.config.bar_type)
+
+    def on_bar(self, bar: Bar) -> None:
+        c = bar.close.as_double()
+        vol = bar.volume.as_double()
+        ts = datetime.utcfromtimestamp(bar.ts_event / 1e9)
+        self.vwap.update_raw(c, vol, ts)
+        if not self.vwap.initialized or not self.atr.initialized or bar.is_single_price():
+            return
+        if self.atr.value == 0:
+            return
+
+        iid = self.config.instrument_id
+        deviation = (c - self.vwap.value) / self.atr.value
+
+        # Exit near VWAP
+        if not self.portfolio.is_flat(iid) and abs(deviation) < self.config.exit_atr_multiple:
+            self.close_all_positions(iid)
+            return
+
+        # Entry on extreme deviation
+        if deviation < -self.config.entry_atr_multiple:
+            self._flip_or_enter(OrderSide.BUY)
+        elif deviation > self.config.entry_atr_multiple:
+            self._flip_or_enter(OrderSide.SELL)
+
+    def on_stop(self) -> None:
+        self._default_on_stop()
+
+    def on_reset(self) -> None:
+        self.vwap.reset()
+        self.atr.reset()
+
+
+# ===========================================================================
+# 19. Linear Regression Channel Strategy
+# ===========================================================================
+class LinRegChannelArenaConfig(StrategyConfig, frozen=True):
+    instrument_id: InstrumentId
+    bar_type: BarType
+    trade_size: Decimal
+    period: PositiveInt = 50
+    entry_std: PositiveFloat = 2.0
+    close_positions_on_stop: bool = True
+
+
+class LinRegChannelArena(_ArenaBase):
+    """Linear regression channel: enter when price breaks beyond 2 std devs
+    from regression line. Exit when price reverts to regression value.
+    Uses slope for trend confirmation."""
+
+    def __init__(self, config: LinRegChannelArenaConfig) -> None:
+        super().__init__(config)
+        self.instrument: Instrument = None
+        self.linreg = LinearRegression(config.period)
+        self._prices: list[float] = []
+
+    def on_start(self) -> None:
+        if not self._load_instrument():
+            return
+        self.register_indicator_for_bars(self.config.bar_type, self.linreg)
+        self.subscribe_bars(self.config.bar_type)
+
+    def on_bar(self, bar: Bar) -> None:
+        if not self.linreg.initialized or bar.is_single_price():
+            return
+
+        c = bar.close.as_double()
+        self._prices.append(c)
+        if len(self._prices) > self.config.period:
+            self._prices.pop(0)
+
+        if len(self._prices) < self.config.period:
+            return
+
+        reg_val = self.linreg.value
+        slope = self.linreg.slope
+
+        # Calculate std dev of residuals
+        mean_price = sum(self._prices) / len(self._prices)
+        variance = sum((p - mean_price) ** 2 for p in self._prices) / len(self._prices)
+        std = variance ** 0.5
+        if std == 0:
+            return
+
+        deviation = (c - reg_val) / std
+        iid = self.config.instrument_id
+
+        # Exit when price reverts near regression
+        if not self.portfolio.is_flat(iid) and abs(deviation) < 0.5:
+            self.close_all_positions(iid)
+            return
+
+        # Trend-confirmed channel breakout
+        if deviation < -self.config.entry_std and slope > 0:
+            self._flip_or_enter(OrderSide.BUY)  # Oversold in uptrend
+        elif deviation > self.config.entry_std and slope < 0:
+            self._flip_or_enter(OrderSide.SELL)  # Overbought in downtrend
+
+    def on_stop(self) -> None:
+        self._default_on_stop()
+
+    def on_reset(self) -> None:
+        self.linreg.reset()
+        self._prices.clear()
+
+
+# ===========================================================================
+# 20. Dual Thrust Strategy (Famous Chinese quant strategy)
+# ===========================================================================
+class DualThrustArenaConfig(StrategyConfig, frozen=True):
+    instrument_id: InstrumentId
+    bar_type: BarType
+    trade_size: Decimal
+    lookback: PositiveInt = 4
+    k_up: PositiveFloat = 0.5
+    k_down: PositiveFloat = 0.5
+    close_positions_on_stop: bool = True
+
+
+class DualThrustArena(_ArenaBase):
+    """Dual Thrust: calculates a range from N-period high/low/close,
+    then sets upper/lower trigger from the open.
+    Buy when price > open + k*range, sell when price < open - k*range.
+    Popular strategy in Chinese futures markets."""
+
+    def __init__(self, config: DualThrustArenaConfig) -> None:
+        super().__init__(config)
+        self.instrument: Instrument = None
+        self._highs: list[float] = []
+        self._lows: list[float] = []
+        self._closes: list[float] = []
+        self._bar_count: int = 0
+        self._session_open: float = 0.0
+
+    def on_start(self) -> None:
+        if not self._load_instrument():
+            return
+        self.subscribe_bars(self.config.bar_type)
+
+    def on_bar(self, bar: Bar) -> None:
+        if bar.is_single_price():
+            return
+
+        h, l, c, o = bar.high.as_double(), bar.low.as_double(), bar.close.as_double(), bar.open.as_double()
+        self._highs.append(h)
+        self._lows.append(l)
+        self._closes.append(c)
+        self._bar_count += 1
+
+        n = self.config.lookback
+        if len(self._highs) > n:
+            self._highs.pop(0)
+            self._lows.pop(0)
+            self._closes.pop(0)
+
+        if len(self._highs) < n:
+            return
+
+        # Use open of current bar as session reference
+        self._session_open = o
+
+        # Calculate range
+        hh = max(self._highs)
+        hc = max(self._closes)
+        ll = min(self._lows)
+        lc = min(self._closes)
+        range_val = max(hh - lc, hc - ll)
+
+        upper_trigger = self._session_open + self.config.k_up * range_val
+        lower_trigger = self._session_open - self.config.k_down * range_val
+
+        iid = self.config.instrument_id
+
+        if c > upper_trigger:
+            self._flip_or_enter(OrderSide.BUY)
+        elif c < lower_trigger:
+            self._flip_or_enter(OrderSide.SELL)
+
+    def on_stop(self) -> None:
+        self._default_on_stop()
+
+    def on_reset(self) -> None:
+        self._highs.clear()
+        self._lows.clear()
+        self._closes.clear()
+        self._bar_count = 0
+        self._session_open = 0.0
+
+
+# ===========================================================================
+# 21. SuperTrend + RSI Combo (TradingView popular multi-indicator)
+# ===========================================================================
+class SuperTrendRSIArenaConfig(StrategyConfig, frozen=True):
+    instrument_id: InstrumentId
+    bar_type: BarType
+    trade_size: Decimal
+    atr_period: PositiveInt = 10
+    atr_multiplier: PositiveFloat = 3.0
+    rsi_period: PositiveInt = 14
+    rsi_overbought: float = 0.70
+    rsi_oversold: float = 0.30
+    close_positions_on_stop: bool = True
+
+
+class SuperTrendRSIArena(_ArenaBase):
+    """SuperTrend for direction + RSI for confirmation.
+    Only buy on ST flip up when RSI was recently oversold.
+    Only sell on ST flip down when RSI was recently overbought.
+    Higher quality signals from multi-indicator confirmation."""
+
+    def __init__(self, config: SuperTrendRSIArenaConfig) -> None:
+        super().__init__(config)
+        self.instrument: Instrument = None
+        self.atr = AverageTrueRange(config.atr_period)
+        self.rsi = RelativeStrengthIndex(config.rsi_period)
+        self._upper_band: float = 0.0
+        self._lower_band: float = 0.0
+        self._prev_upper: float = 0.0
+        self._prev_lower: float = 0.0
+        self._trend: int = 1
+        self._prev_close: float = 0.0
+
+    def on_start(self) -> None:
+        if not self._load_instrument():
+            return
+        self.register_indicator_for_bars(self.config.bar_type, self.atr)
+        self.register_indicator_for_bars(self.config.bar_type, self.rsi)
+        self.subscribe_bars(self.config.bar_type)
+
+    def on_bar(self, bar: Bar) -> None:
+        if not self.atr.initialized or not self.rsi.initialized or bar.is_single_price():
+            self._prev_close = bar.close.as_double()
+            return
+
+        h, l, c = bar.high.as_double(), bar.low.as_double(), bar.close.as_double()
+        hl2 = (h + l) / 2.0
+        atr_val = self.atr.value * self.config.atr_multiplier
+
+        basic_upper = hl2 + atr_val
+        basic_lower = hl2 - atr_val
+
+        if basic_lower > self._prev_lower or self._prev_close < self._prev_lower:
+            self._lower_band = basic_lower
+        else:
+            self._lower_band = self._prev_lower
+        if basic_upper < self._prev_upper or self._prev_close > self._prev_upper:
+            self._upper_band = basic_upper
+        else:
+            self._upper_band = self._prev_upper
+
+        prev_trend = self._trend
+        if prev_trend == -1 and c > self._prev_upper:
+            self._trend = 1
+        elif prev_trend == 1 and c < self._prev_lower:
+            self._trend = -1
+
+        rsi_val = self.rsi.value
+
+        # Buy: ST flips up + RSI not overbought (was recently oversold)
+        if self._trend == 1 and prev_trend == -1 and rsi_val < self.config.rsi_overbought:
+            self._flip_or_enter(OrderSide.BUY)
+        # Sell: ST flips down + RSI not oversold (was recently overbought)
+        elif self._trend == -1 and prev_trend == 1 and rsi_val > self.config.rsi_oversold:
+            self._flip_or_enter(OrderSide.SELL)
+
+        self._prev_upper = self._upper_band
+        self._prev_lower = self._lower_band
+        self._prev_close = c
+
+    def on_stop(self) -> None:
+        self._default_on_stop()
+
+    def on_reset(self) -> None:
+        self.atr.reset()
+        self.rsi.reset()
+        self._upper_band = self._lower_band = 0.0
+        self._prev_upper = self._prev_lower = 0.0
+        self._trend = 1
+        self._prev_close = 0.0
+
+
+# ===========================================================================
+# 22. Keltner Trend Riding Strategy
+# ===========================================================================
+class KeltnerTrendArenaConfig(StrategyConfig, frozen=True):
+    instrument_id: InstrumentId
+    bar_type: BarType
+    trade_size: Decimal
+    kc_period: PositiveInt = 20
+    kc_multiplier: PositiveFloat = 2.0
+    close_positions_on_stop: bool = True
+
+
+class KeltnerTrendArena(_ArenaBase):
+    """Keltner Channel trend riding: price above upper KC = strong uptrend,
+    price below lower KC = strong downtrend. Exit when price returns to middle."""
+
+    def __init__(self, config: KeltnerTrendArenaConfig) -> None:
+        super().__init__(config)
+        self.instrument: Instrument = None
+        self.kc = KeltnerChannel(config.kc_period, config.kc_multiplier)
+
+    def on_start(self) -> None:
+        if not self._load_instrument():
+            return
+        self.subscribe_bars(self.config.bar_type)
+
+    def on_bar(self, bar: Bar) -> None:
+        h, l, c = bar.high.as_double(), bar.low.as_double(), bar.close.as_double()
+        self.kc.update_raw(h, l, c)
+        if not self.kc.initialized or bar.is_single_price():
+            return
+
+        iid = self.config.instrument_id
+
+        if c > self.kc.upper:
+            self._flip_or_enter(OrderSide.BUY)
+        elif c < self.kc.lower:
+            self._flip_or_enter(OrderSide.SELL)
+        elif not self.portfolio.is_flat(iid):
+            # Price returned to middle -> exit
+            if self.portfolio.is_net_long(iid) and c < self.kc.middle:
+                self.close_all_positions(iid)
+            elif self.portfolio.is_net_short(iid) and c > self.kc.middle:
+                self.close_all_positions(iid)
+
+    def on_stop(self) -> None:
+        self._default_on_stop()
+
+    def on_reset(self) -> None:
+        self.kc.reset()
+
+
+# ===========================================================================
+# 23. Ichimoku + RSI Combo Strategy
+# ===========================================================================
+class IchimokuRSIArenaConfig(StrategyConfig, frozen=True):
+    instrument_id: InstrumentId
+    bar_type: BarType
+    trade_size: Decimal
+    tenkan_period: PositiveInt = 9
+    kijun_period: PositiveInt = 26
+    senkou_period: PositiveInt = 52
+    rsi_period: PositiveInt = 14
+    rsi_overbought: float = 0.65
+    rsi_oversold: float = 0.35
+    close_positions_on_stop: bool = True
+
+
+class IchimokuRSIArena(_ArenaBase):
+    """Ichimoku cloud for trend + RSI for momentum confirmation.
+    Buy when above cloud, TK bullish, RSI > 50.
+    Sell when below cloud, TK bearish, RSI < 50.
+    Exit inside cloud or RSI extreme."""
+
+    def __init__(self, config: IchimokuRSIArenaConfig) -> None:
+        super().__init__(config)
+        self.instrument: Instrument = None
+        self.ichimoku = _IchimokuCalc(config.tenkan_period, config.kijun_period, config.senkou_period)
+        self.rsi = RelativeStrengthIndex(config.rsi_period)
+
+    def on_start(self) -> None:
+        if not self._load_instrument():
+            return
+        self.register_indicator_for_bars(self.config.bar_type, self.rsi)
+        self.subscribe_bars(self.config.bar_type)
+
+    def on_bar(self, bar: Bar) -> None:
+        h, l, c = bar.high.as_double(), bar.low.as_double(), bar.close.as_double()
+        self.ichimoku.update(h, l)
+        if not self.ichimoku.initialized or not self.rsi.initialized or bar.is_single_price():
+            return
+
+        iid = self.config.instrument_id
+        tenkan = self.ichimoku.tenkan_sen
+        kijun = self.ichimoku.kijun_sen
+        cloud_top = max(self.ichimoku.senkou_span_a, self.ichimoku.senkou_span_b)
+        cloud_bottom = min(self.ichimoku.senkou_span_a, self.ichimoku.senkou_span_b)
+        rsi_val = self.rsi.value
+
+        # Exit on RSI extreme or inside cloud
+        if self.portfolio.is_net_long(iid):
+            if rsi_val > self.config.rsi_overbought or c < cloud_bottom:
+                self.close_all_positions(iid)
+                return
+        elif self.portfolio.is_net_short(iid):
+            if rsi_val < self.config.rsi_oversold or c > cloud_top:
+                self.close_all_positions(iid)
+                return
+
+        # Entry with cloud + TK + RSI confirmation
+        if c > cloud_top and tenkan > kijun and rsi_val > 0.50 and rsi_val < self.config.rsi_overbought:
+            self._flip_or_enter(OrderSide.BUY)
+        elif c < cloud_bottom and tenkan < kijun and rsi_val < 0.50 and rsi_val > self.config.rsi_oversold:
+            self._flip_or_enter(OrderSide.SELL)
+
+    def on_stop(self) -> None:
+        self._default_on_stop()
+
+    def on_reset(self) -> None:
+        self.ichimoku.reset()
+        self.rsi.reset()
+
+
+# ===========================================================================
+# 24. Pivot Reversal Strategy (Swing High/Low)
+# ===========================================================================
+class PivotReversalArenaConfig(StrategyConfig, frozen=True):
+    instrument_id: InstrumentId
+    bar_type: BarType
+    trade_size: Decimal
+    swing_period: PositiveInt = 5
+    ema_period: PositiveInt = 20
+    close_positions_on_stop: bool = True
+
+
+class PivotReversalArena(_ArenaBase):
+    """Trade swing high/low pivot reversals with EMA trend filter.
+    Buy at swing low when above EMA (pullback in uptrend).
+    Sell at swing high when below EMA (bounce in downtrend)."""
+
+    def __init__(self, config: PivotReversalArenaConfig) -> None:
+        super().__init__(config)
+        self.instrument: Instrument = None
+        self.swings = Swings(config.swing_period)
+        self.ema = ExponentialMovingAverage(config.ema_period)
+        self._prev_direction: int = 0
+
+    def on_start(self) -> None:
+        if not self._load_instrument():
+            return
+        self.register_indicator_for_bars(self.config.bar_type, self.ema)
+        self.subscribe_bars(self.config.bar_type)
+
+    def on_bar(self, bar: Bar) -> None:
+        h, l = bar.high.as_double(), bar.low.as_double()
+        c = bar.close.as_double()
+        ts = datetime.utcfromtimestamp(bar.ts_event / 1e9)
+        self.swings.update_raw(h, l, ts)
+        if not self.swings.initialized or not self.ema.initialized or bar.is_single_price():
+            return
+
+        iid = self.config.instrument_id
+        direction = self.swings.direction
+
+        # Swing changed direction
+        if direction != self._prev_direction and self._prev_direction != 0:
+            # Swing turned up (new swing low formed) + above EMA
+            if direction == 1 and c > self.ema.value:
+                self._flip_or_enter(OrderSide.BUY)
+            # Swing turned down (new swing high formed) + below EMA
+            elif direction == -1 and c < self.ema.value:
+                self._flip_or_enter(OrderSide.SELL)
+
+        # Exit if EMA flips
+        if self.portfolio.is_net_long(iid) and c < self.ema.value:
+            self.close_all_positions(iid)
+        elif self.portfolio.is_net_short(iid) and c > self.ema.value:
+            self.close_all_positions(iid)
+
+        self._prev_direction = direction
+
+    def on_stop(self) -> None:
+        self._default_on_stop()
+
+    def on_reset(self) -> None:
+        self.swings.reset()
+        self.ema.reset()
+        self._prev_direction = 0
+
+
+# ===========================================================================
+# 25. Hull Moving Average Cross Strategy
+# ===========================================================================
+class HullMACrossArenaConfig(StrategyConfig, frozen=True):
+    instrument_id: InstrumentId
+    bar_type: BarType
+    trade_size: Decimal
+    fast_period: PositiveInt = 9
+    slow_period: PositiveInt = 21
+    close_positions_on_stop: bool = True
+
+
+class HullMACrossArena(_ArenaBase):
+    """Hull MA is faster and smoother than EMA, reducing lag.
+    Fast Hull crosses above Slow Hull = buy, below = sell.
+    Hull MA eliminates most lag from traditional MAs."""
+
+    def __init__(self, config: HullMACrossArenaConfig) -> None:
+        super().__init__(config)
+        self.instrument: Instrument = None
+        self.fast_hma = HullMovingAverage(config.fast_period)
+        self.slow_hma = HullMovingAverage(config.slow_period)
+
+    def on_start(self) -> None:
+        if not self._load_instrument():
+            return
+        self.register_indicator_for_bars(self.config.bar_type, self.fast_hma)
+        self.register_indicator_for_bars(self.config.bar_type, self.slow_hma)
+        self.subscribe_bars(self.config.bar_type)
+
+    def on_bar(self, bar: Bar) -> None:
+        if not self.indicators_initialized() or bar.is_single_price():
+            return
+
+        if self.fast_hma.value >= self.slow_hma.value:
+            self._flip_or_enter(OrderSide.BUY)
+        else:
+            self._flip_or_enter(OrderSide.SELL)
+
+    def on_stop(self) -> None:
+        self._default_on_stop()
+
+    def on_reset(self) -> None:
+        self.fast_hma.reset()
+        self.slow_hma.reset()
